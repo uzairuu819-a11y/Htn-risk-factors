@@ -18,7 +18,13 @@ def load_and_train():
         y = y.astype('category').cat.codes
     
     model = xgb.XGBClassifier(eval_metric='logloss')
-    model.fit(X, y)
+        # Ensure all features in X are numeric
+    X = X.apply(pd.to_numeric, errors='coerce').fillna(0)
+    
+    # Ensure target variable y is numeric
+    if y.dtype == 'object' or y.dtype.name == 'category':
+        y = y.astype('category').cat.codes
+model.fit(X, y)
     return model, X.columns, X
 
 model, feature_names, X_data = load_and_train()
