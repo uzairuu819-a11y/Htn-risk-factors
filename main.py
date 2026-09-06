@@ -1,9 +1,7 @@
-import os
-os.system("pip install xgboost pandas scikit-learn")
-
 import streamlit as st
 import pandas as pd
 import xgboost as xgb
+
 
 
 st.title("Hypertension Risk CDSS")
