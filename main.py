@@ -39,13 +39,13 @@ st.markdown(
 )
 
 
-# Helper function to assign standard clinical units, ranges, and types based on features
+# Helper function to assign standard clinical units, ranges, and types safely
 def get_feature_meta(col_name, series):
   col_lower = col_name.lower()
   unit = ""
   min_val = float(series.min()) if not series.empty else 0.0
   max_val = float(series.max()) if not series.empty else 100.0
-  default_val = float(series.median()) if not series.empty else 0.0
+  raw_default = float(series.median()) if not series.empty else 0.0
   input_type = "number"
   options = []
 
@@ -98,6 +98,12 @@ def get_feature_meta(col_name, series):
     unit = "g/day"
     min_val, max_val = 0.0, 200.0
 
+  if input_type == "number":
+    if min_v_check := min_val >= max_val:
+      min_val, max_val = 0.0, max(100.0, raw_default + 1.0)
+    # Clamp default value securely between min and max bounds to prevent Streamlit value errors
+    default_val = max(min_val, min(max_val, raw_default))
+
   return unit, min_val, max_val, default_val, input_type, options
 
 
@@ -123,7 +129,6 @@ def load_and_train():
   X = df.drop(columns=[target_col])
   y = df[target_col]
 
-  # Preprocess columns for training
   for col in X.columns:
     if X[col].dtype == "object":
       X[col] = X[col].astype("category").cat.codes
@@ -174,7 +179,6 @@ for col in feature_names:
   if input_type == "selectbox":
     selected_val = st.sidebar.selectbox(label=label_text, options=options)
     input_data[col] = selected_val
-    # Map back to numeric for model prediction
     if "Male" in options or "Female" in options:
       raw_input_for_model[col] = 1 if selected_val == "Male" else 0
     elif "Never" in options:
@@ -184,9 +188,6 @@ for col in feature_names:
     else:
       raw_input_for_model[col] = 1 if "Yes" in selected_val else 0
   else:
-    if min_v >= max_v:
-      min_v, max_v = 0.0, 100.0
-
     val = st.sidebar.number_input(
         label=label_text,
         value=float(default_v),
