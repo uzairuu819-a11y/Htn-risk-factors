@@ -1,5 +1,5 @@
 import os
-os.system("pip install xgboost pandas")
+os.system("pip install xgboost pandas scikit-learn")
 
 import streamlit as st
 import pandas as pd
