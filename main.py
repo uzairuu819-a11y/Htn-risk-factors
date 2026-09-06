@@ -39,23 +39,40 @@ st.markdown(
 )
 
 
-# Helper function to assign standard medical units and physiological bounds
-def get_feature_unit_and_bounds(col_name, series):
+# Helper function to assign standard clinical units, ranges, and types based on features
+def get_feature_meta(col_name, series):
   col_lower = col_name.lower()
   unit = ""
   min_val = float(series.min()) if not series.empty else 0.0
   max_val = float(series.max()) if not series.empty else 100.0
   default_val = float(series.median()) if not series.empty else 0.0
+  input_type = "number"
+  options = []
 
-  if "age" in col_lower:
+  if "gender" in col_lower or "sex" in col_lower:
+    input_type = "selectbox"
+    options = ["Male", "Female"]
+    default_val = "Male"
+  elif "age" in col_lower:
     unit = "Years"
     min_val, max_val = 1.0, 120.0
-  elif (
-      "bp" in col_lower
-      or "systolic" in col_lower
-      or "sbp" in col_lower
-      or "blood pressure" in col_lower
-  ):
+  elif "salt" in col_lower or "sodium" in col_lower:
+    unit = "g/day"
+    min_val, max_val = 0.0, 30.0
+  elif "physical" in col_lower or "activity" in col_lower or "mvpa" in col_lower:
+    unit = "min/week"
+    min_val, max_val = 0.0, 1000.0
+  elif "sleep" in col_lower:
+    unit = "h/night"
+    min_val, max_val = 1.0, 16.0
+  elif "stress" in col_lower:
+    unit = "Scale (1-10)"
+    min_val, max_val = 1.0, 10.0
+  elif "family" in col_lower or "history" in col_lower or "fh" in col_lower:
+    input_type = "selectbox"
+    options = ["No (0)", "Yes (1)"]
+    default_val = "No (0)"
+  elif "bp" in col_lower or "systolic" in col_lower or "sbp" in col_lower:
     unit = "mmHg"
     min_val, max_val = 60.0, 250.0
   elif "diastolic" in col_lower or "dbp" in col_lower:
@@ -73,14 +90,15 @@ def get_feature_unit_and_bounds(col_name, series):
   elif "heart" in col_lower or "pulse" in col_lower or "hr" in col_lower:
     unit = "bpm"
     min_val, max_val = 40.0, 200.0
-  elif "weight" in col_lower:
-    unit = "kg"
-    min_val, max_val = 20.0, 300.0
-  elif "height" in col_lower:
-    unit = "cm"
-    min_val, max_val = 50.0, 250.0
+  elif "smoke" in col_lower or "smoking" in col_lower:
+    input_type = "selectbox"
+    options = ["Never (0)", "Former (1)", "Current (2)"]
+    default_val = "Never (0)"
+  elif "alcohol" in col_lower:
+    unit = "g/day"
+    min_val, max_val = 0.0, 200.0
 
-  return unit, min_val, max_val, default_val
+  return unit, min_val, max_val, default_val, input_type, options
 
 
 @st.cache_resource
@@ -92,7 +110,6 @@ def load_and_train():
 
   df = pd.read_csv(csv_files[0])
 
-  # Automatically detect target column if named explicitly, else use the last column
   target_candidates = [
       col
       for col in df.columns
@@ -106,6 +123,10 @@ def load_and_train():
   X = df.drop(columns=[target_col])
   y = df[target_col]
 
+  # Preprocess columns for training
+  for col in X.columns:
+    if X[col].dtype == "object":
+      X[col] = X[col].astype("category").cat.codes
   X = X.apply(pd.to_numeric, errors="coerce").fillna(0)
 
   if y.dtype == "object" or y.dtype.name == "category":
@@ -135,27 +156,46 @@ except Exception as e:
   st.error(f"Error loading model or data: {e}")
   st.stop()
 
-# Interactive Sidebar with Medical Units & Bounds
+# Interactive Sidebar with Medical Units, Gender, and Standardized Standards
 st.sidebar.header("🫀 Patient Vitals & History")
 st.sidebar.markdown(
     "Adjust parameters below to simulate patient risk assessment."
 )
 
 input_data = {}
+raw_input_for_model = {}
+
 for col in feature_names:
-  unit, min_v, max_v, default_v = get_feature_unit_and_bounds(col, X_data[col])
+  unit, min_v, max_v, default_v, input_type, options = get_feature_meta(
+      col, X_data[col]
+  )
   label_text = f"{col} ({unit})" if unit else f"{col}"
 
-  if min_v >= max_v:
-    min_v, max_v = 0.0, 100.0
+  if input_type == "selectbox":
+    selected_val = st.sidebar.selectbox(label=label_text, options=options)
+    input_data[col] = selected_val
+    # Map back to numeric for model prediction
+    if "Male" in options or "Female" in options:
+      raw_input_for_model[col] = 1 if selected_val == "Male" else 0
+    elif "Never" in options:
+      raw_input_for_model[col] = (
+          0 if "Never" in selected_val else (1 if "Former" in selected_val else 2)
+      )
+    else:
+      raw_input_for_model[col] = 1 if "Yes" in selected_val else 0
+  else:
+    if min_v >= max_v:
+      min_v, max_v = 0.0, 100.0
 
-  input_data[col] = st.sidebar.number_input(
-      label=label_text,
-      value=float(default_v),
-      min_value=float(min_v),
-      max_value=float(max_v),
-      step=1.0,
-  )
+    val = st.sidebar.number_input(
+        label=label_text,
+        value=float(default_v),
+        min_value=float(min_v),
+        max_value=float(max_v),
+        step=1.0,
+    )
+    input_data[col] = val
+    raw_input_for_model[col] = val
 
 st.sidebar.markdown("---")
 predict_btn = st.sidebar.button("Calculate Hypertension Risk")
@@ -169,11 +209,10 @@ with col1:
   st.dataframe(input_df, use_container_width=True)
 
   if predict_btn:
-    probabilities = model.predict_proba(input_df)[0]
+    model_input_df = pd.DataFrame([raw_input_for_model])
+    probabilities = model.predict_proba(model_input_df)[0]
 
-    # Dynamically map probability to the positive (high risk) class
     if len(probabilities) > 1:
-      # If class 1 is high risk, take index 1. Ensure robustness against class label order.
       classes = list(model.classes_)
       if 1 in classes:
         high_risk_idx = classes.index(1)
@@ -207,9 +246,9 @@ with col2:
   st.markdown("### ℹ️ CDSS Guide")
   st.info(
       "**How to use:**\n"
-      "1. Enter or modify patient metrics in the sidebar panel with standard"
-      " units.\n"
-      "2. Ensure values fall within standard physiological ranges.\n"
+      "1. Configure gender, lifestyle metrics, and vitals with standard clinical"
+      " units in the sidebar.\n"
+      "2. Ensure parameters comply with standard physiological ranges.\n"
       "3. Click **Calculate Risk** to execute real-time XGBoost"
       " classification."
   )
