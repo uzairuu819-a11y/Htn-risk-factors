@@ -1,6 +1,10 @@
+import os
+os.system("pip install xgboost pandas")
+
 import streamlit as st
 import pandas as pd
 import xgboost as xgb
+
 
 st.title("Hypertension Risk CDSS")
 st.write("Enter patient vitals and history in the sidebar to calculate hypertension risk.")
