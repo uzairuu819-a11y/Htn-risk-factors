@@ -1,55 +1,72 @@
-import streamlit as st
+import glob
 import pandas as pd
+import streamlit as st
 import xgboost as xgb
 
+st.set_page_config(
+    page_title="Hypertension Risk CDSS", page_icon="🩺", layout="wide"
+)
+
+
+@st.cache_resource
+def load_and_train():
+  csv_files = glob.glob("*.csv")
+  if not csv_files:
+    st.error(
+        "No CSV dataset found in your GitHub repository! Please ensure your"
+        " dataset file is uploaded."
+    )
+    st.stop()
+
+  df = pd.read_csv(csv_files[0])
+
+  target_col = df.columns[-1]
+  X = df.drop(columns=[target_col])
+  y = df[target_col]
+
+  X = X.apply(pd.to_numeric, errors="coerce").fillna(0)
+
+  if y.dtype == "object" or y.dtype.name == "category":
+    y = y.astype("category").cat.codes
+  else:
+    y = pd.to_numeric(y, errors="coerce").fillna(0).astype(int)
+
+  model = xgb.XGBClassifier(eval_metric="logloss", random_state=42)
+  model.fit(X, y)
+
+  return model, X.columns, X
 
 
 st.title("Hypertension Risk CDSS")
-st.write("Enter patient vitals and history in the sidebar to calculate hypertension risk.")
+st.write(
+    "Enter patient vitals and history in the sidebar to calculate hypertension"
+    " risk."
+)
 
-# Load dataset and train model
-@st.cache_data
-def load_and_train():
-    data = pd.read_csv('hypertension_risk_dataset.csv')
-    X = data.iloc[:, :-1]
-    y = data.iloc[:, -1]
-    X = pd.get_dummies(X)
-    if y.dtype == 'object':
-        y = y.astype('category').cat.codes
-    
-    model = xgb.XGBClassifier(eval_metric='logloss')
-        # Ensure all features in X are numeric
-    X = X.apply(pd.to_numeric, errors='coerce').fillna(0)
-    
-    # Ensure target variable y is numeric
-    if y.dtype == 'object' or y.dtype.name == 'category':
-        y = y.astype('category').cat.codes
-model.fit(X, y)
-    return model, X.columns, X
+try:
+  model, feature_names, X_data = load_and_train()
+except Exception as e:
+  st.error(f"Error loading model or data: {e}")
+  st.stop()
 
-model, feature_names, X_data = load_and_train()
-
-# Build Sidebar Controls
-st.sidebar.header("Patient Vitals")
-patient_data = {}
+st.sidebar.header("Patient Vitals & History")
+input_data = {}
 
 for col in feature_names:
-    if X_data[col].nunique() <= 2:
-        patient_data[col] = st.sidebar.selectbox(f"{col}", [0, 1])
-    else:
-        min_val = float(X_data[col].min())
-        max_val = float(X_data[col].max())
-        mean_val = float(X_data[col].mean())
-        patient_data[col] = st.sidebar.slider(f"{col}", min_val, max_val, mean_val)
+  default_val = float(X_data[col].mean()) if len(X_data) > 0 else 0.0
+  input_data[col] = st.sidebar.number_input(label=str(col), value=default_val)
 
-# Predict Outcome
-if st.sidebar.button("Calculate Risk"):
-    patient_df = pd.DataFrame([patient_data])
-    risk_probability = model.predict_proba(patient_df)[0][1] * 100
-    
-    st.header(f"Risk Score: {risk_probability:.1f}%")
-    
-    if risk_probability > 50:
-        st.error("⚠️ High Risk of Hypertension. Early intervention recommended.")
-    else:
-        st.success("✅ Low Risk. Maintain current lifestyle.")
+if st.sidebar.button("Predict Risk", type="primary"):
+  input_df = pd.DataFrame([input_data])
+  prediction = model.predict(input_df)[0]
+  probability = model.predict_proba(input_df)[0][1]
+
+  st.subheader("Assessment Result")
+  if prediction == 1:
+    st.error(
+        f"**High Risk of Hypertension** (Probability: {probability * 100:.2f}%)"
+    )
+  else:
+    st.success(
+        f"**Low Risk of Hypertension** (Probability: {probability * 100:.2f}%)"
+    )
