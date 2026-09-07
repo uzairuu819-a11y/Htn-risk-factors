@@ -132,7 +132,11 @@ def build_feature_encoder(col_name, series):
   """
   tag = _classify_column(col_name)
   clean = series.dropna()
-  is_object = clean.dtype == object or str(clean.dtype) == "category"
+  # Anything that isn't a numeric dtype is treated as text/categorical.
+  # (pandas 3.x uses its own StringDtype - shown as "str" - for CSV text
+  # columns instead of the classic "object" dtype, so we can't just check
+  # for `== object` anymore; is_numeric_dtype is the robust check.)
+  is_object = not pd.api.types.is_numeric_dtype(clean)
 
   # A numeric clinical value stored as text (e.g. "120" as a string) should
   # be treated as numeric, not as an arbitrary category.
@@ -278,6 +282,25 @@ def encode_target(y_raw):
 # ---------------------------------------------------------------------------
 # 4. Load data & train model (cached)
 # ---------------------------------------------------------------------------
+def _ensure_all_numeric(X):
+  """
+  Belt-and-braces safety net: guarantee every column reaching XGBoost is
+  numeric. If a column still contains an unmapped/unexpected value (any
+  value our encoders didn't recognise) this force-encodes it instead of
+  crashing, and reports which column(s) needed it so you can double-check
+  that field's encoding.
+  """
+  X = X.copy()
+  forced_cols = []
+  for col in X.columns:
+    if not pd.api.types.is_numeric_dtype(X[col]):
+      forced_cols.append(col)
+      codes, _ = pd.factorize(X[col])
+      X[col] = codes
+  X = X.fillna(0)
+  return X, forced_cols
+
+
 @st.cache_resource
 def load_and_train():
   csv_files = glob.glob("*.csv")
@@ -302,18 +325,27 @@ def load_and_train():
       X[col] = pd.to_numeric(X_raw[col], errors="coerce")
   X = X.fillna(X.median(numeric_only=True)).fillna(0)
 
+  # Guaranteed fallback - training can never crash on a stray string value.
+  X, forced_cols = _ensure_all_numeric(X)
+
   y, positive_label, class_balance = encode_target(y_raw)
 
   model = xgb.XGBClassifier(
       eval_metric="logloss", random_state=42, n_estimators=200, max_depth=4
   )
-  model.fit(X, y)
+  try:
+    model.fit(X, y)
+  except ValueError as e:
+    bad = {c: str(X[c].dtype) for c in X.columns
+           if not pd.api.types.is_numeric_dtype(X[c])}
+    raise ValueError(f"{e} | Non-numeric columns still present: {bad}") from e
 
   diagnostics = {
       "target_col": target_col,
       "positive_label": positive_label,
       "class_balance": class_balance,
       "n_classes": int(y.nunique()),
+      "forced_cols": forced_cols,
   }
   return model, X.columns, encoders, diagnostics
 
@@ -425,6 +457,13 @@ with col2:
     )
     st.write("**Class balance in training data (0 = low risk, 1 = high risk):**")
     st.write(diagnostics["class_balance"])
+    if diagnostics.get("forced_cols"):
+      st.warning(
+          "These columns had values that didn't match the expected category "
+          f"mapping and were auto-encoded as a fallback: {diagnostics['forced_cols']}. "
+          "Their sidebar widget may not reflect true clinical meaning - tell me "
+          "the column name and its raw values if you want this cleaned up properly."
+      )
     if diagnostics["n_classes"] < 2:
       st.warning(
           "Only one class was found in the target column - the model "
