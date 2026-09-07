@@ -7,24 +7,33 @@ import xgboost as xgb
 import plotly.graph_objects as go
 
 # ---------------------------------------------------------------------------
-# 1. Page Configuration & UI/UX Styling
+# 1. Page Configuration & Light Blue Theme UI/UX Styling
 # ---------------------------------------------------------------------------
 st.set_page_config(page_title="CardioLens - Risk CDSS", page_icon="🩺", layout="wide")
 
 st.markdown("""
     <style>
+    /* Light blue color theme background */
     .stApp {
-        background-color: #F8FAFC;
-        background-image: url("data:image/svg+xml,%3Csvg width='400' height='400' viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M200 250c-50-50-80-70-80-100 0-30 20-50 50-50 20 0 30 15 30 15s10-15 30-15c30 0 50 20 50 50 0 30-30 50-80 100z' stroke='%230EA5E9' stroke-width='2' fill='none' opacity='0.03'/%3E%3Cpath d='M0 200h100l20-40 40 100 30-80 20 20h190' stroke='%23334155' stroke-width='2' fill='none' opacity='0.04'/%3E%3C/svg%3E");
+        background-color: #EBF8FF;
+        background-image: url("data:image/svg+xml,%3Csvg width='400' height='400' viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M200 250c-50-50-80-70-80-100 0-30 20-50 50-50 20 0 30 15 30 15s10-15 30-15c30 0 50 20 50 50 0 30-30 50-80 100z' stroke='%230284C7' stroke-width='2' fill='none' opacity='0.05'/%3E%3Cpath d='M0 200h100l20-40 40 100 30-80 20 20h190' stroke='%230369A1' stroke-width='2' fill='none' opacity='0.06'/%3E%3C/svg%3E");
         background-attachment: fixed;
-        color: #334155;
+        color: #1E293B;
     }
+    
+    /* Hide Streamlit default top toolbar, hamburger menu, footer, and manage app badge */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    div[data-testid="stToolbar"] {display: none !important;}
+    .viewerBadge_container__1QSob {display: none !important;}
+    
     div[data-baseweb="tab"] { font-weight: 600; }
     .stButton>button {
-        width: 100%; background-color: #0EA5E9; color: white;
+        width: 100%; background-color: #0284C7; color: white;
         font-weight: 600; border-radius: 8px; padding: 12px; border: none;
     }
-    .stButton>button:hover { background-color: #0284C7; }
+    .stButton>button:hover { background-color: #0369A1; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -61,7 +70,7 @@ def make_gauge(val, title, thresholds, colors):
         number={'suffix': "%" if is_percentage else ""},
         gauge={
             'axis': {'range': [0, max_val], 'tickwidth': 1},
-            'bar': {'color': "#334155"},
+            'bar': {'color': "#1E293B"},
             'steps': [
                 {'range': [0, thresholds[0]], 'color': colors[0]},
                 {'range': [thresholds[0], thresholds[1]], 'color': colors[1]},
@@ -69,7 +78,7 @@ def make_gauge(val, title, thresholds, colors):
             ]
         }
     ))
-    fig.update_layout(height=250, margin=dict(l=20, r=20, t=40, b=20), paper_bgcolor="rgba(0,0,0,0)", font={'color': "#334155"})
+    fig.update_layout(height=250, margin=dict(l=20, r=20, t=40, b=20), paper_bgcolor="rgba(0,0,0,0)", font={'color': "#1E293B"})
     return fig
 
 # ---------------------------------------------------------------------------
@@ -272,13 +281,13 @@ if submit:
     if ascvd_score >= 7.5:
         interventions.append("- **Statin Therapy Consideration:** ACC/AHA guidelines suggest initiating a discussion regarding moderate-to-high intensity statin therapy.")
     if ui['sbp'] >= 130 or ui['dbp'] >= 80:
-        interventions.append("- **Blood Management:** Implement the DASH diet, rich in fruits, vegetables, and low-fat dairy, alongside sodium restriction (<1,500 mg/day optimal, or at least 1,000 mg/day reduction).")
+        interventions.append("- **Blood Pressure Management:** Implement the DASH diet, rich in fruits, vegetables, and low-fat dairy, alongside sodium restriction.")
     if ui['salt'] > 5.0:
         interventions.append(f"- **Sodium Reduction:** Current salt intake ({ui['salt']} g/day) exceeds recommended dietary targets. Gradually taper sodium to ease vascular resistance.")
     if ui['smoker']:
         interventions.append("- **Tobacco Cessation:** Strongly advise smoking cessation and provide support resources or pharmacotherapy.")
     if ui['stress'] >= 7:
-        interventions.append(f"- **Stress Management:** High stress level reported ({ui['stress']}/10). Recommend mindfulness, cognitive behavioral therapy, or structured physical activity to mitigate sympathoadrenal activation.")
+        interventions.append(f"- **Stress Management:** High stress level reported ({ui['stress']}/10). Recommend mindfulness, cognitive behavioral therapy, or structured physical activity.")
     if not interventions:
         interventions.append("- **Maintenance:** Patient profile is stable. Maintain routine physical activity (≥150 min/week moderate intensity) and balanced nutrition.")
         
