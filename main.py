@@ -51,6 +51,11 @@ def _classify_column(col_name):
   name = col_name.lower()
   if "gender" in name or "sex" in name:
     return "gender"
+  # Check this BEFORE the generic "history" catch-all below - a column like
+  # "Blood_Pressure_History" contains "history" but needs its own 2/3-level
+  # handling, not the generic Yes/No one.
+  if "blood_pressure_history" in name or "bp_history" in name:
+    return "bp_history"
   if "smok" in name:
     return "smoking"
   if "famil" in name or "history" in name or name == "fh":
@@ -94,6 +99,28 @@ def _map_yesno_value(v):
     return "Yes"
   if s in ("no", "n", "false", "negative"):
     return "No"
+  return None
+
+
+def _map_bp_history_value(v):
+  s = str(v).strip().lower()
+  if s in ("normotensive", "normal", "0"):
+    return "Normotensive"
+  if s in ("prehypertensive", "pre-hypertensive", "elevated", "borderline"):
+    return "Prehypertensive"
+  if s in ("hypertensive", "high", "1"):
+    return "Hypertensive"
+  if "normo" in s:
+    return "Normotensive"
+  if "prehyp" in s or "elevated" in s or "borderline" in s:
+    return "Prehypertensive"
+  if "hyper" in s:
+    return "Hypertensive"
+  yn = _map_yesno_value(v)
+  if yn == "Yes":
+    return "Hypertensive"
+  if yn == "No":
+    return "Normotensive"
   return None
 
 
@@ -155,8 +182,20 @@ def build_feature_encoder(col_name, series):
 
   if tag == "smoking":
     uniques = list(pd.unique(clean))
+    # Only treat as Never/Former/Current if it's genuinely low-cardinality;
+    # a numeric column with many distinct values is more likely pack-years.
+    if is_object or len(uniques) <= 5:
+      options, label_to_raw, encode_map = _categorical_from_mapper(
+          col_name, uniques, _map_smoking_value, ["Never", "Former", "Current"])
+      return {"kind": "categorical", "options": options,
+              "label_to_raw": label_to_raw, "encode_map": encode_map, "unit": ""}
+    # else: fall through to numeric handling below (pack-years).
+
+  if tag == "bp_history":
+    uniques = list(pd.unique(clean))
+    order = ["Normotensive", "Prehypertensive", "Hypertensive"]
     options, label_to_raw, encode_map = _categorical_from_mapper(
-        col_name, uniques, _map_smoking_value, ["Never", "Former", "Current"])
+        col_name, uniques, _map_bp_history_value, order)
     return {"kind": "categorical", "options": options,
             "label_to_raw": label_to_raw, "encode_map": encode_map, "unit": ""}
 
@@ -205,6 +244,8 @@ def build_feature_encoder(col_name, series):
     unit, min_val, max_val = "bpm", 40.0, 200.0
   elif "alcohol" in name:
     unit, min_val, max_val = "g/day", 0.0, 200.0
+  elif "smok" in name:
+    unit, min_val, max_val = "pack-years", 0.0, 100.0
 
   if min_val >= max_val:
     min_val, max_val = 0.0, max(100.0, default_val + 1.0)
@@ -217,9 +258,18 @@ def build_feature_encoder(col_name, series):
 # ---------------------------------------------------------------------------
 # 3. Target column + "which class means high risk" detection
 # ---------------------------------------------------------------------------
-TARGET_NAME_CANDIDATES = [
-    "target", "output", "class", "htn", "hypertension", "risk",
-    "label", "diagnosis", "disease", "outcome", "y",
+# Unambiguous - these words essentially only ever appear on an outcome
+# column, so a substring match is safe.
+STRONG_TARGET_CANDIDATES = ["target", "output", "label", "diagnosis", "outcome"]
+# Ambiguous - these words can also appear inside risk-FACTOR column names
+# (e.g. "Family_History_Hypertension", "Blood_Pressure_History"), so they
+# are only substring-matched on columns that don't look like a risk-factor
+# column (see FEATURE_DISQUALIFIERS below).
+WEAK_TARGET_CANDIDATES = ["class", "htn", "hypertension", "risk", "disease", "y"]
+FEATURE_DISQUALIFIERS = [
+    "history", "family", "smoking", "activity", "salt", "sodium", "sleep",
+    "stress", "alcohol", "age", "gender", "sex", "bmi", "glucose",
+    "cholesterol", "heart_rate", "pulse",
 ]
 POSITIVE_HINTS = ["yes", "high", "positive", "hypertensive", "present", "disease"]
 NEGATIVE_HINTS = ["no", "low", "negative", "normal", "absent", "healthy"]
@@ -227,9 +277,26 @@ NEGATIVE_HINTS = ["no", "low", "negative", "normal", "absent", "healthy"]
 
 def detect_target_column(df):
   cols_lower = {c.lower(): c for c in df.columns}
-  for cand in TARGET_NAME_CANDIDATES:
+
+  # 1) exact column-name match against any candidate.
+  for cand in STRONG_TARGET_CANDIDATES + WEAK_TARGET_CANDIDATES:
     if cand in cols_lower:
       return cols_lower[cand]
+
+  # 2) substring match for unambiguous candidates.
+  for cand in STRONG_TARGET_CANDIDATES:
+    for lower_name, orig in cols_lower.items():
+      if cand in lower_name:
+        return orig
+
+  # 3) substring match for ambiguous candidates, but skip columns that look
+  #    like a risk-FACTOR (history/lifestyle) column rather than the outcome.
+  for cand in WEAK_TARGET_CANDIDATES:
+    for lower_name, orig in cols_lower.items():
+      if cand in lower_name and not any(d in lower_name for d in FEATURE_DISQUALIFIERS):
+        return orig
+
+  # 4) fallback: last column, as before.
   return df.columns[-1]
 
 
@@ -330,8 +397,17 @@ def load_and_train():
 
   y, positive_label, class_balance = encode_target(y_raw)
 
+  # Hypertension datasets are usually imbalanced (more "no HTN" than "HTN").
+  # Without correcting for that, XGBoost tends to just always predict the
+  # majority class - which looks exactly like "always Low risk" regardless
+  # of input. scale_pos_weight is the standard fix.
+  neg_count = int((y == 0).sum())
+  pos_count = int((y == 1).sum())
+  scale_pos_weight = (neg_count / pos_count) if pos_count > 0 else 1.0
+
   model = xgb.XGBClassifier(
-      eval_metric="logloss", random_state=42, n_estimators=200, max_depth=4
+      eval_metric="logloss", random_state=42, n_estimators=200, max_depth=4,
+      scale_pos_weight=scale_pos_weight,
   )
   try:
     model.fit(X, y)
@@ -340,12 +416,28 @@ def load_and_train():
            if not pd.api.types.is_numeric_dtype(X[c])}
     raise ValueError(f"{e} | Non-numeric columns still present: {bad}") from e
 
+  # Sanity check: what's the actual spread of predicted risk across the
+  # model's own training data? If even the highest-risk-looking real patient
+  # in your training set gets a low probability, the target/label direction
+  # is almost certainly wrong rather than anything in the sidebar inputs.
+  train_proba_all = model.predict_proba(X)
+  classes_ = list(model.classes_)
+  risk_col = classes_.index(1) if 1 in classes_ else int(np.argmax(classes_))
+  train_risk_proba = train_proba_all[:, risk_col]
+
   diagnostics = {
       "target_col": target_col,
       "positive_label": positive_label,
       "class_balance": class_balance,
       "n_classes": int(y.nunique()),
       "forced_cols": forced_cols,
+      "scale_pos_weight": round(scale_pos_weight, 2),
+      "train_proba_min": float(train_risk_proba.min()),
+      "train_proba_max": float(train_risk_proba.max()),
+      "train_proba_mean": float(train_risk_proba.mean()),
+      "schema": {c: (encoders[c]["options"] if encoders[c]["kind"] == "categorical"
+                      else f"numeric ({encoders[c]['unit'] or 'no unit'})")
+                 for c in X.columns},
   }
   return model, X.columns, encoders, diagnostics
 
@@ -449,7 +541,7 @@ with col2:
       "4. If risk seems stuck on one result, open **Model diagnostics** "
       "below first."
   )
-  with st.expander("🛠️ Model diagnostics"):
+  with st.expander("🛠️ Model diagnostics", expanded=True):
     st.write(f"**Target column detected:** `{diagnostics['target_col']}`")
     st.write(
         f"**Raw value treated as 'high risk' (encoded 1):** "
@@ -457,6 +549,26 @@ with col2:
     )
     st.write("**Class balance in training data (0 = low risk, 1 = high risk):**")
     st.write(diagnostics["class_balance"])
+    st.write(
+        f"**Imbalance correction (scale_pos_weight):** "
+        f"`{diagnostics['scale_pos_weight']}`"
+    )
+    st.write(
+        f"**Predicted risk probability across your OWN training data:** "
+        f"min `{diagnostics['train_proba_min']*100:.1f}%`, "
+        f"max `{diagnostics['train_proba_max']*100:.1f}%`, "
+        f"mean `{diagnostics['train_proba_mean']*100:.1f}%`"
+    )
+    if diagnostics["train_proba_max"] < 0.5:
+      st.error(
+          "⚠️ Even the highest-risk patient in your OWN training data never "
+          "crosses 50%. This means the target column or the 'high risk' "
+          "label direction is very likely wrong - it is not something you "
+          "can fix from the sidebar. Share your target column's exact name "
+          "and its distinct values and I'll fix the mapping directly."
+      )
+    st.write("**Detected column types/units:**")
+    st.write(diagnostics["schema"])
     if diagnostics.get("forced_cols"):
       st.warning(
           "These columns had values that didn't match the expected category "
