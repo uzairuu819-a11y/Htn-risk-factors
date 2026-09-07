@@ -7,18 +7,18 @@ import xgboost as xgb
 import plotly.graph_objects as go
 
 # ---------------------------------------------------------------------------
-# 1. Page Configuration & Light Blue Theme UI/UX Styling
+# 1. Page Configuration & Modern Neutral Medical UI Styling
 # ---------------------------------------------------------------------------
 st.set_page_config(page_title="CardioLens - Risk CDSS", page_icon="🩺", layout="wide")
 
 st.markdown("""
     <style>
-    /* Light blue color theme background */
+    /* Clean, professional off-white/pearl background with high-contrast slate text */
     .stApp {
-        background-color: #EBF8FF;
-        background-image: url("data:image/svg+xml,%3Csvg width='400' height='400' viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M200 250c-50-50-80-70-80-100 0-30 20-50 50-50 20 0 30 15 30 15s10-15 30-15c30 0 50 20 50 50 0 30-30 50-80 100z' stroke='%230284C7' stroke-width='2' fill='none' opacity='0.05'/%3E%3Cpath d='M0 200h100l20-40 40 100 30-80 20 20h190' stroke='%230369A1' stroke-width='2' fill='none' opacity='0.06'/%3E%3C/svg%3E");
+        background-color: #F8FAFC;
+        background-image: url("data:image/svg+xml,%3Csvg width='400' height='400' viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M200 250c-50-50-80-70-80-100 0-30 20-50 50-50 20 0 30 15 30 15s10-15 30-15c30 0 50 20 50 50 0 30-30 50-80 100z' stroke='%2364748B' stroke-width='2' fill='none' opacity='0.03'/%3E%3Cpath d='M0 200h100l20-40 40 100 30-80 20 20h190' stroke='%23475569' stroke-width='2' fill='none' opacity='0.03'/%3E%3C/svg%3E");
         background-attachment: fixed;
-        color: #1E293B;
+        color: #0F172A;
     }
     
     /* Hide Streamlit default top toolbar, hamburger menu, footer, and manage app badge */
@@ -30,10 +30,10 @@ st.markdown("""
     
     div[data-baseweb="tab"] { font-weight: 600; }
     .stButton>button {
-        width: 100%; background-color: #0284C7; color: white;
+        width: 100%; background-color: #0F172A; color: white;
         font-weight: 600; border-radius: 8px; padding: 12px; border: none;
     }
-    .stButton>button:hover { background-color: #0369A1; }
+    .stButton>button:hover { background-color: #334155; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -66,11 +66,11 @@ def make_gauge(val, title, thresholds, colors):
     is_percentage = "ASCVD" in title or "Cardiovascular" in title
     max_val = 100 if is_percentage else 1.0
     fig = go.Figure(go.Indicator(
-        mode="gauge+number", value=val, title={'text': title, 'font': {'size': 18}},
-        number={'suffix': "%" if is_percentage else ""},
+        mode="gauge+number", value=val, title={'text': title, 'font': {'size': 18, 'color': '#0F172A'}},
+        number={'suffix': "%" if is_percentage else "", 'font': {'color': '#0F172A'}},
         gauge={
-            'axis': {'range': [0, max_val], 'tickwidth': 1},
-            'bar': {'color': "#1E293B"},
+            'axis': {'range': [0, max_val], 'tickwidth': 1, 'tickfont': {'color': '#0F172A'}},
+            'bar': {'color': "#0F172A"},
             'steps': [
                 {'range': [0, thresholds[0]], 'color': colors[0]},
                 {'range': [thresholds[0], thresholds[1]], 'color': colors[1]},
@@ -78,7 +78,7 @@ def make_gauge(val, title, thresholds, colors):
             ]
         }
     ))
-    fig.update_layout(height=250, margin=dict(l=20, r=20, t=40, b=20), paper_bgcolor="rgba(0,0,0,0)", font={'color': "#1E293B"})
+    fig.update_layout(height=250, margin=dict(l=20, r=20, t=40, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={'color': "#0F172A"})
     return fig
 
 # ---------------------------------------------------------------------------
@@ -140,6 +140,7 @@ model, feature_names, encoders, class_labels = load_and_train()
 # ---------------------------------------------------------------------------
 st.title("CardioLens Risk Assessment")
 st.markdown("Clinical Decision Support System integrating 10-Year ASCVD Risk and Hypertension Probability.")
+st.markdown("--- *Designed by Dr. Uzair Saljoqi* ---")
 
 if not model:
     st.warning("⚠️ No CSV dataset found in the directory. Please upload a dataset to train the ML model.")
